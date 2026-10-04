@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Odisea — Una experiencia inmersiva</title>
+<meta name="description" content="Un viaje en WebGL: 80 000 partículas que se transforman mientras desplazas la página.">
+<meta name="theme-color" content="#030308">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter+Tight:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #030308;
+    --fg: #f2f3f8;
+    --muted: rgba(242, 243, 248, .62);
+    --line: rgba(255, 255, 255, .14);
+    --accent: #8fb3ff;
+    --ease: cubic-bezier(.16, 1, .3, 1);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); color: var(--fg); }
+  body { font-family: "Inter Tight", system-ui, sans-serif; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
+  body.loading { overflow: hidden; }
+  a, button { color: inherit; font: inherit; }
+  @media (pointer: fine) { body.ready, body.ready a, body.ready button { cursor: none; } }
+
+  #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; z-index: 0; }
+  .vignette { position: fixed; inset: 0; pointer-events: none; z-index: 1; background: radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, .7)); }
+  .grain {
+    position: fixed; inset: -50%; pointer-events: none; z-index: 2; opacity: .07;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    animation: grain 1s steps(6) infinite;
+  }
+  @keyframes grain { 0% { transform: translate(0, 0); } 33% { transform: translate(-4%, 3%); } 66% { transform: translate(3%, -5%); } 100% { transform: translate(-2%, 2%); } }
+
+  /* ---------- Pantalla de carga ---------- */
+  .loader {
+    position: fixed; inset: 0; z-index: 100; background: var(--bg); display: grid; place-items: center;
+    transition: clip-path 1.4s var(--ease); clip-path: inset(0 0 0 0);
+  }
+  body.ready .loader { clip-path: inset(0 0 100% 0); pointer-events: none; }
+  .loader-inner { text-align: center; }
+  .loader-num { font-family: "Syne", sans-serif; font-weight: 800; font-size: clamp(72px, 16vw, 180px); letter-spacing: -.05em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .loader-bar { width: min(280px, 60vw); height: 1px; background: var(--line); margin: 22px auto 14px; overflow: hidden; }
+  .loader-bar i { display: block; height: 100%; background: var(--fg); transform-origin: 0 50%; transform: scaleX(0); }
+  .loader small { letter-spacing: .3em; text-transform: uppercase; font-size: 11px; color: var(--muted); }
+
+  /* ---------- HUD ---------- */
+  .hud { position: fixed; z-index: 20; pointer-events: none; opacity: 0; transition: opacity 1s .6s; }
+  body.ready .hud { opacity: 1; }
+  .hud > * { pointer-events: auto; }
+  .hud-top { inset: 0 0 auto 0; display: flex; justify-content: space-between; align-items: center; padding: 22px clamp(16px, 4vw, 44px); }
+  .brand { font-family: "Syne", sans-serif; font-weight: 800; letter-spacing: .02em; font-size: 20px; text-decoration: none; display: flex; align-items: center; gap: 10px; }
+  .brand i { width: 10px; height: 10px; border-radius: 50%; background: var(--fg); box-shadow: 0 0 16px var(--accent), 0 0 4px #fff; }
+  .sound { display: flex; align-items: center; gap: 12px; background: none; border: 1px solid var(--line); border-radius: 999px; padding: 9px 16px; font-size: 12px; letter-spacing: .16em; text-transform: uppercase; backdrop-filter: blur(8px); }
+  .bars { display: flex; gap: 2px; align-items: flex-end; height: 12px; }
+  .bars span { width: 2px; height: 3px; background: var(--fg); border-radius: 1px; transition: height .3s; }
+  .sound.on .bars span { animation: eq .9s ease-in-out infinite alternate; }
+  .sound.on .bars span:nth-child(2) { animation-delay: -.3s; }
+  .sound.on .bars span:nth-child(3) { animation-delay: -.6s; }
+  .sound.on .bars span:nth-child(4) { animation-delay: -.15s; }
+  @keyframes eq { from { height: 3px; } to { height: 12px; } }
+
+  .hud-side { right: clamp(16px, 3vw, 36px); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 14px; }
+  .hud-side button { width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, .5); background: transparent; padding: 0; position: relative; transition: background .4s, transform .4s var(--ease); }
+  .hud-side button::after { content: ""; position: absolute; inset: -8px; }
+  .hud-side button.on { background: var(--fg); transform: scale(1.4); }
+
+  .hud-bottom { inset: auto 0 0 0; display: flex; justify-content: space-between; align-items: flex-end; padding: 22px clamp(16px, 4vw, 44px); font-size: 12px; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); }
+  .chapter-label { display: flex; gap: 14px; align-items: baseline; }
+  .chapter-label b { font-family: "Syne", sans-serif; color: var(--fg); font-size: 15px; letter-spacing: .05em; }
+  .progress-line { position: fixed; left: 0; bottom: 0; height: 2px; width: 100%; background: linear-gradient(90deg, #8fb3ff, #ff5fa2, #7df9ff); transform-origin: 0 50%; transform: scaleX(0); z-index: 21; }
+  .hint { display: flex; align-items: center; gap: 10px; }
+  .hint i { width: 18px; height: 28px; border: 1px solid var(--muted); border-radius: 10px; position: relative; }
+  .hint i::after { content: ""; position: absolute; left: 50%; top: 6px; width: 2px; height: 6px; margin-left: -1px; background: var(--fg); border-radius: 1px; animation: wheel 1.6s infinite; }
+  @keyframes wheel { 0% { opacity: 0; transform: translateY(-3px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateY(8px); } }
+
+  /* ---------- Capítulos ---------- */
+  .chapters { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+  .chapter { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; padding: 0 clamp(20px, 8vw, 120px); }
+  .chapter.center { align-items: center; text-align: center; }
+  .chapter.right { align-items: flex-end; text-align: right; }
+  .chapter.bottom { justify-content: flex-end; padding-bottom: clamp(90px, 14vh, 150px); align-items: center; text-align: center; }
+  .chapter .kicker { font-size: 12px; letter-spacing: .3em; text-transform: uppercase; color: var(--muted); margin-bottom: 22px; overflow: hidden; }
+  .chapter .kicker span { display: inline-block; transform: translateY(110%); transition: transform 1s var(--ease); }
+  .chapter h2 { font-family: "Syne", sans-serif; font-weight: 800; font-size: clamp(38px, 7.6vw, 124px); line-height: .92; letter-spacing: -.04em; text-transform: uppercase; }
+  .chapter h2 .line { display: block; overflow: hidden; padding-bottom: .06em; }
+  .chapter h2 .c { display: inline-block; transform: translateY(105%) rotate(8deg); opacity: 0; transition: transform 1.1s var(--ease), opacity .8s; transition-delay: calc(var(--i) * 28ms); }
+  .chapter h2 .outline { color: transparent; -webkit-text-stroke: 1.5px var(--fg); }
+  .chapter p { max-width: 40ch; margin-top: 26px; color: var(--muted); font-size: clamp(15px, 1.3vw, 18px); line-height: 1.55; opacity: 0; transform: translateY(20px); transition: opacity 1s .35s, transform 1s .35s var(--ease); }
+  .chapter .cta { pointer-events: auto; margin-top: 30px; display: inline-flex; align-items: center; gap: 12px; padding: 16px 28px; border-radius: 999px; background: var(--fg); color: #05050a; font-weight: 500; text-decoration: none; opacity: 0; transform: translateY(20px); transition: opacity 1s .5s, transform 1s .5s var(--ease), box-shadow .4s; }
+  .chapter .cta:hover { box-shadow: 0 0 40px rgba(143, 179, 255, .7); }
+  .chapter.on .kicker span, .chapter.on h2 .c { transform: none; opacity: 1; }
+  .chapter.on p, .chapter.on .cta { opacity: 1; transform: none; }
+  .chapter:not(.on) h2 .c { transform: translateY(-105%) rotate(-6deg); transition-duration: .6s; transition-delay: calc(var(--i) * 12ms); }
+
+  .spacer { position: relative; z-index: 0; }
+
+  /* ---------- Cursor ---------- */
+  .cursor, .cursor-ring { position: fixed; left: 0; top: 0; z-index: 200; pointer-events: none; border-radius: 50%; mix-blend-mode: difference; opacity: 0; transition: opacity .4s; }
+  body.ready .cursor, body.ready .cursor-ring { opacity: 1; }
+  .cursor { width: 6px; height: 6px; margin: -3px 0 0 -3px; background: #fff; }
+  .cursor-ring { width: 38px; height: 38px; margin: -19px 0 0 -19px; border: 1px solid #fff; transition: width .4s var(--ease), height .4s var(--ease), margin .4s var(--ease), opacity .4s; }
+  .cursor-ring.big { width: 70px; height: 70px; margin: -35px 0 0 -35px; }
+  @media (pointer: coarse) { .cursor, .cursor-ring { display: none; } }
+
+  .noscript { position: fixed; inset: auto 16px 16px; z-index: 300; color: var(--muted); font-size: 14px; }
+
+  @media (max-width: 700px) {
+    .hud-side { display: none; }
+    .hint span { display: none; }
+    .chapter.right { align-items: flex-start; text-align: left; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .grain { animation: none; }
+    .chapter h2 .c, .chapter p, .chapter .cta, .chapter .kicker span { transition-duration: .01ms !important; }
+  }
+</style>
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+    }
+  }
+</script>
+</head>
+<body class="loading">
+
+<div class="loader" aria-hidden="true">
+  <div class="loader-inner">
+    <div class="loader-num" id="loadNum">0</div>
+    <div class="loader-bar"><i id="loadBar"></i></div>
+    <small>Preparando el viaje</small>
+  </div>
+</div>
+
+<canvas id="scene" aria-hidden="true"></canvas>
+<div class="vignette"></div>
+<div class="grain"></div>
+
+<header class="hud hud-top">
+  <a href="#" class="brand" id="home"><i></i>ODISEA</a>
+  <button class="sound" id="sound" aria-pressed="false" aria-label="Activar sonido ambiental">
+    <span class="bars"><span></span><span></span><span></span><span></span></span>
+    <span id="soundLabel">Sonido</span>
+  </button>
+</header>
+<nav class="hud hud-side" id="dots" aria-label="Capítulos"></nav>
+<div class="hud hud-bottom">
+  <div class="chapter-label"><b id="chNum">00</b><span id="chName">Origen</span></div>
+  <div class="hint"><span>Desliza · Clic para una onda</span><i></i></div>
+</div>
+<div class="progress-line" id="progress"></div>
+
+<div class="chapters">
+  <section class="chapter center on" data-name="Origen">
+    <div class="kicker"><span>Capítulo 00 — Origen</span></div>
+    <h2><span class="line">Cruza el</span><span class="line outline">horizonte</span></h2>
+    <p>Un viaje hecho con 80 000 partículas. Desliza para avanzar, mueve el cursor para apartarlas y haz clic para enviar una onda.</p>
+  </section>
+  <section class="chapter" data-name="Génesis">
+    <div class="kicker"><span>Capítulo 01 — Génesis</span></div>
+    <h2><span class="line">Todo nace</span><span class="line outline">de una</span><span class="line">chispa</span></h2>
+    <p>La materia se dispersa y se ordena en brazos de luz que giran sin detenerse.</p>
+  </section>
+  <section class="chapter right" data-name="Forma">
+    <div class="kicker"><span>Capítulo 02 — Forma</span></div>
+    <h2><span class="line">Geometría</span><span class="line outline">imposible</span></h2>
+    <p>Un nudo que se cierra sobre sí mismo: la misma materia, otra regla.</p>
+  </section>
+  <section class="chapter center" data-name="Velocidad">
+    <div class="kicker"><span>Capítulo 03 — Velocidad</span></div>
+    <h2><span class="line outline">Más rápido</span><span class="line">que la luz</span></h2>
+  </section>
+  <section class="chapter" data-name="Océano">
+    <div class="kicker"><span>Capítulo 04 — Océano</span></div>
+    <h2><span class="line">Un mar</span><span class="line outline">de luz</span></h2>
+    <p>Las olas se calculan en la tarjeta gráfica, cuadro por cuadro, mientras miras.</p>
+  </section>
+  <section class="chapter bottom" data-name="Destino">
+    <div class="kicker"><span>Capítulo 05 — Destino</span></div>
+    <p style="margin-top:0">Tu marca merece una web que la gente no olvide.</p>
+    <a class="cta" href="mailto:hola@ejemplo.com">Empecemos el viaje →</a>
+  </section>
+</div>
+
+<div class="spacer" id="spacer"></div>
+
+<div class="cursor" id="cursor"></div>
+<div class="cursor-ring" id="ring"></div>
+<noscript><p class="noscript">Esta experiencia necesita JavaScript y WebGL.</p></noscript>
+
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const small = matchMedia('(max-width: 768px)').matches;
+const fine = matchMedia('(pointer: fine)').matches;
+const N = small ? 32000 : 80000;
+const CH = 6;                 // capítulos
+const H = () => Math.max(innerHeight, 1) * 1.4;  // recorrido de scroll por capítulo
+// Enlace directo a un capítulo: #c0 … #c5
+const DEEP = location.hash.match(/^#c([0-5])$/);
+if (DEEP) history.scrollRestoration = 'manual';
+
+/* ---------- Carga ---------- */
+const loadNum = document.getElementById('loadNum'), loadBar = document.getElementById('loadBar');
+let loadShown = 0, loadTarget = 30;
+(function tick() {
+  loadShown += (loadTarget - loadShown) * 0.08;
+  const v = Math.min(100, Math.round(loadShown));
+  loadNum.textContent = v; loadBar.style.transform = `scaleX(${v / 100})`;
+  if (v < 100) requestAnimationFrame(tick);
+  else setTimeout(() => { document.body.classList.remove('loading'); document.body.classList.add('ready'); if (DEEP) scrollTo(0, DEEP[1] * H()); }, 250);
+})();
+
+/* ---------- Texto en letras ---------- */
+let ci = 0;
+document.querySelectorAll('.chapter h2 .line').forEach(line => {
+  const t = line.textContent; line.textContent = '';
+  [...t].forEach(ch => {
+    const s = document.createElement('span'); s.className = 'c';
+    s.textContent = ch === ' ' ? ' ' : ch; s.style.setProperty('--i', ci++ % 14);
+    line.append(s);
+  });
+});
+const chapters = [...document.querySelectorAll('.chapter')];
+document.getElementById('spacer').style.height = `calc(${(CH - 1) * 140}vh + 100vh)`;
+
+/* ---------- Formas ---------- */
+const rand = (a, b) => a + Math.random() * (b - a);
+function sampleText(word) {
+  const c = document.createElement('canvas'), W = 1400, Hh = 360;
+  c.width = W; c.height = Hh;
+  const x = c.getContext('2d');
+  x.fillStyle = '#fff'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  let fs = 290;
+  x.font = '800 ' + fs + 'px Syne, sans-serif';
+  const mw = x.measureText(word).width;
+  if (mw > W * 0.94) { fs = Math.floor(fs * W * 0.94 / mw); x.font = '800 ' + fs + 'px Syne, sans-serif'; }
+  x.fillText(word, W / 2, Hh / 2);
+  const d = x.getImageData(0, 0, W, Hh).data, pts = [];
+  for (let y = 0; y < Hh; y += 2) for (let i = 0; i < W; i += 2) if (d[(y * W + i) * 4 + 3] > 128) pts.push(i, y);
+  return { pts, W, Hh };
+}
+function buildShapes() {
+  const S = Array.from({ length: CH }, () => new Float32Array(N * 3));
+  const rnd = new Float32Array(N);
+  const txt = sampleText('ODISEA');
+  const tw = small ? 7.5 : 13.5;
+  for (let i = 0; i < N; i++) {
+    const j = i * 3;
+    rnd[i] = Math.random();
+    // 0 · Esfera
+    const u = Math.random() * 2 - 1, th = Math.random() * Math.PI * 2, rr = 2.5 * Math.cbrt(rand(0.97, 1));
+    const sq = Math.sqrt(1 - u * u);
+    S[0].set([Math.cos(th) * sq * rr, u * rr, Math.sin(th) * sq * rr], j);
+    // 1 · Galaxia
+    const r = Math.pow(Math.random(), 1.6) * 6, arm = (i % 3) / 3 * Math.PI * 2 + r * 0.9;
+    const sp = () => Math.pow(Math.random(), 3) * (Math.random() < .5 ? 1 : -1) * 0.5 * (r + 0.3);
+    S[1].set([Math.cos(arm) * r + sp(), sp() * 0.35, Math.sin(arm) * r + sp()], j);
+    // 2 · Nudo toroidal (2,3)
+    const t = Math.random() * Math.PI * 2, p = 2, q = 3, k = 1.05;
+    const cr = 2 + Math.cos(q * t);
+    const tr = 0.42 * Math.sqrt(Math.random()), ta = Math.random() * Math.PI * 2, tb = Math.random() * Math.PI * 2;
+    S[2].set([cr * Math.cos(p * t) * k + Math.cos(ta) * Math.sin(tb) * tr, cr * Math.sin(p * t) * k + Math.sin(ta) * Math.sin(tb) * tr, -Math.sin(q * t) * k + Math.cos(tb) * tr], j);
+    // 3 · Túnel
+    const a = Math.random() * Math.PI * 2, tR = 1.7 + Math.pow(Math.random(), 2.5) * 2.2;
+    S[3].set([Math.cos(a) * tR, Math.sin(a) * tR, rand(-54, 6)], j);
+    // 4 · Océano
+    S[4].set([rand(-16, 16), 0, rand(-22, 5)], j);
+    // 5 · Texto
+    const n = (Math.random() * (txt.pts.length / 2)) | 0;
+    S[5].set([(txt.pts[n * 2] / txt.W - 0.5) * tw + rand(-.02, .02), -(txt.pts[n * 2 + 1] / txt.Hh - 0.5) * tw * (txt.Hh / txt.W) + 0.9, rand(-.15, .15)], j);
+  }
+  return { S, rnd };
+}
+
+const NOISE = /* glsl */`
+vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
+vec4 mod289(vec4 x){return x-floor(x*(1.0/289.0))*289.0;}
+vec4 permute(vec4 x){return mod289(((x*34.0)+1.0)*x);}
+vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
+float snoise(vec3 v){
+  const vec2 C=vec2(1.0/6.0,1.0/3.0); const vec4 D=vec4(0.0,0.5,1.0,2.0);
+  vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx);
+  vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.0-g; vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy);
+  vec3 x1=x0-i1+C.xxx; vec3 x2=x0-i2+C.yyy; vec3 x3=x0-D.yyy;
+  i=mod289(i);
+  vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));
+  float n_=0.142857142857; vec3 ns=n_*D.wyz-D.xzx;
+  vec4 j=p-49.0*floor(p*ns.z*ns.z); vec4 x_=floor(j*ns.z); vec4 y_=floor(j-7.0*x_);
+  vec4 x=x_*ns.x+ns.yyyy; vec4 y=y_*ns.x+ns.yyyy; vec4 h=1.0-abs(x)-abs(y);
+  vec4 b0=vec4(x.xy,y.xy); vec4 b1=vec4(x.zw,y.zw);
+  vec4 s0=floor(b0)*2.0+1.0; vec4 s1=floor(b1)*2.0+1.0; vec4 sh=-step(h,vec4(0.0));
+  vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy; vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
+  vec3 g0=vec3(a0.xy,h.x); vec3 g1=vec3(a0.zw,h.y); vec3 g2=vec3(a1.xy,h.z); vec3 g3=vec3(a1.zw,h.w);
+  vec4 norm=taylorInvSqrt(vec4(dot(g0,g0),dot(g1,g1),dot(g2,g2),dot(g3,g3)));
+  g0*=norm.x; g1*=norm.y; g2*=norm.z; g3*=norm.w;
+  vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0); m=m*m;
+  return 42.0*dot(m*m,vec4(dot(g0,x0),dot(g1,x1),dot(g2,x2),dot(g3,x3)));
+}`;
+
+/* ---------- Escena ---------- */
+async function init() {
+  try { await Promise.race([document.fonts.load('800 290px Syne'), new Promise(r => setTimeout(r, 2500))]); } catch (e) {}
+  loadTarget = 60;
+
+  const canvas = document.getElementById('scene');
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' }); }
+  catch (e) { loadTarget = 101; return; }
+  const PR = Math.min(devicePixelRatio, small ? 1.5 : 2);
+  renderer.setPixelRatio(PR);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color('#04040a');
+  const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.05, 200);
+
+  const { S, rnd } = buildShapes();
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(S[0], 3));
+  for (let k = 1; k < CH; k++) geo.setAttribute('aS' + k, new THREE.BufferAttribute(S[k], 3));
+  geo.setAttribute('aRnd', new THREE.BufferAttribute(rnd, 1));
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 100);
+
+  const U = {
+    uTime: { value: 0 }, uProg: { value: 0 }, uSize: { value: small ? 20 : 17 }, uPR: { value: PR },
+    uMouse: { value: new THREE.Vector2(9, 9) }, uForce: { value: 0 }, uAspect: { value: innerWidth / innerHeight },
+    uPulsePos: { value: new THREE.Vector2(9, 9) }, uPulseT: { value: -99 },
+    uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uGain: { value: 1 }
+  };
+  const mat = new THREE.ShaderMaterial({
+    uniforms: U, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: NOISE + /* glsl */`
+      uniform float uTime, uProg, uSize, uPR, uForce, uAspect, uPulseT, uGain;
+      uniform vec2 uMouse, uPulsePos;
+      uniform vec3 uC1, uC2;
+      attribute vec3 aS1, aS2, aS3, aS4, aS5;
+      attribute float aRnd;
+      varying vec3 vCol; varying float vA;
+      mat2 rot(float a){ float s = sin(a), c = cos(a); return mat2(c, -s, s, c); }
+      vec3 shape(float k){
+        if (k < 0.5) {
+          vec3 p = position;
+          float br = 1.0 + 0.07 * sin(uTime * 1.4 + p.y * 3.0) + 0.05 * sin(uTime * 0.9 + p.x * 4.0 + aRnd * 2.0);
+          p.xz *= rot(uTime * 0.15);
+          return p * br;
+        }
+        if (k < 1.5) { vec3 p = aS1; float r = length(p.xz); p.xz *= rot(uTime * (0.06 + 0.18 / (1.0 + r))); return p; }
+        if (k < 2.5) { vec3 p = aS2; p.xz *= rot(uTime * 0.3); p.xy *= rot(0.5); return p; }
+        if (k < 3.5) { vec3 p = aS3; p.z = mod(p.z + uTime * 10.0 + 54.0, 60.0) - 54.0; p.xy *= rot(uTime * 0.2 + p.z * 0.02); return p; }
+        if (k < 4.5) {
+          vec3 p = aS4;
+          p.y = -1.3 + sin(p.x * 0.5 + uTime * 0.9) * 0.5 + cos(p.z * 0.55 + uTime * 0.7) * 0.5 + sin((p.x + p.z) * 0.28 + uTime * 0.5) * 0.35;
+          return p;
+        }
+        vec3 p = aS5;
+        p += 0.025 * vec3(sin(uTime * 2.0 + aRnd * 40.0), cos(uTime * 1.7 + aRnd * 30.0), 0.0);
+        return p;
+      }
+      void main(){
+        float k = floor(uProg);
+        float f = uProg - k;
+        float d = aRnd * 0.25;
+        float t = smoothstep(0.15 + d, 0.6 + d, f);
+        vec3 p = mix(shape(k), shape(min(k + 1.0, 5.0)), t);
+        float burst = sin(t * 3.14159);
+        vec3 dir = normalize(vec3(sin(aRnd * 91.7), cos(aRnd * 47.3), sin(aRnd * 13.1 + 1.0)));
+        p += dir * burst * (0.8 + aRnd * 2.2);
+        if (burst > 0.01) p += burst * 0.9 * vec3(snoise(p * 0.35 + uTime * 0.2), snoise(p * 0.35 + 7.0 + uTime * 0.2), snoise(p * 0.35 + 13.0 + uTime * 0.2));
+
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        vec4 clip = projectionMatrix * mv;
+        vec2 ndc = clip.xy / clip.w;
+        vec2 asp = vec2(uAspect, 1.0);
+        vec2 dm = (ndc - uMouse) * asp;
+        float push = smoothstep(0.38, 0.0, length(dm)) * uForce;
+        ndc += normalize(dm + 1e-4) / asp * push * 0.13;
+        vec2 dp = (ndc - uPulsePos) * asp;
+        float age = uTime - uPulseT;
+        float ring = exp(-pow((length(dp) - age * 1.5) * 7.0, 2.0)) * exp(-age * 1.2);
+        ndc += normalize(dp + 1e-4) / asp * ring * 0.09;
+        clip.xy = ndc * clip.w;
+        gl_Position = clip;
+
+        float size = uSize * uPR * (0.35 + aRnd * 0.9) * (0.6 + uGain * 0.4) / -mv.z;
+        gl_PointSize = min(size * (1.0 + push * 1.2 + ring * 2.5), 42.0 * uPR);
+        float tw = 0.65 + 0.35 * sin(uTime * 2.2 + aRnd * 60.0);
+        vCol = mix(uC1, uC2, aRnd) * tw + vec3(push + ring) * 0.5;
+        vA = smoothstep(0.2, 1.6, -mv.z) * (0.32 + burst * 0.15) * uGain;
+      }`,
+    fragmentShader: /* glsl */`
+      varying vec3 vCol; varying float vA;
+      void main(){
+        float d = length(gl_PointCoord - 0.5);
+        float a = smoothstep(0.5, 0.0, d);
+        gl_FragColor = vec4(vCol, a * a * vA);
+      }`
+  });
+  scene.add(new THREE.Points(geo, mat));
+
+  // Resplandor (bloom)
+  const composer = new EffectComposer(renderer);
+  composer.setPixelRatio(Math.min(PR, 1.5));
+  composer.addPass(new RenderPass(scene, camera));
+  const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.6, 0.5, 0.2);
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
+  loadTarget = 85;
+
+  /* Cámara, colores y fondo por capítulo */
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const narrow = () => innerWidth < 700;
+  const KEYS = [
+    { pos: V(0, 0, 7.5), look: V(0, 0, 0), c1: '#8fb3ff', c2: '#ffffff', bg: '#04040a', bloom: 0.55, gain: 1 },
+    { pos: V(0, 6, 8), look: V(-2.5, -0.5, 0), c1: '#ffcf9e', c2: '#6f5bff', bg: '#07040c', bloom: 0.7, gain: 1.8 },
+    { pos: V(0.5, 0.8, 8.5), look: V(1.8, 0, 0), c1: '#ff5fa2', c2: '#7a5cff', bg: '#0a0410', bloom: 0.65, gain: 1.3 },
+    { pos: V(0, 0, 6), look: V(0, 0, -10), c1: '#7df9ff', c2: '#3a6bff', bg: '#02060d', bloom: 1.0, gain: 2.8 },
+    { pos: V(0, 3.4, 7), look: V(-1.5, -1.6, -5), c1: '#4dffd2', c2: '#2a5bff', bg: '#020a0c', bloom: 0.7, gain: 2.2 },
+    { pos: V(0, 0.2, 9), look: V(0, 0.6, 0), c1: '#ffffff', c2: '#b58cff', bg: '#05050a', bloom: 0.6, gain: 1.3 }
+  ].map(k => ({ ...k, c1: new THREE.Color(k.c1), c2: new THREE.Color(k.c2), bg: new THREE.Color(k.bg) }));
+  const ease = x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+
+  /* Interacción */
+  const mouse = new THREE.Vector2(9, 9), mTarget = new THREE.Vector2(9, 9);
+  let force = 0, forceT = 0;
+  addEventListener('pointermove', e => {
+    mTarget.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    if (mouse.x > 5) mouse.copy(mTarget);
+    forceT = 1;
+  });
+  document.addEventListener('pointerleave', () => { forceT = 0; });
+  addEventListener('pointerdown', e => {
+    if (e.target.closest('a, button')) return;
+    U.uPulsePos.value.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    U.uPulseT.value = U.uTime.value;
+    if (audio) audio.ping();
+  });
+
+  function resize() {
+    renderer.setSize(innerWidth, innerHeight);
+    composer.setSize(innerWidth, innerHeight);
+    camera.aspect = innerWidth / innerHeight;
+    camera.fov = camera.aspect < 0.8 ? 78 : 60;
+    camera.updateProjectionMatrix();
+    U.uAspect.value = camera.aspect;
+  }
+  addEventListener('resize', resize); resize();
+
+  /* HUD */
+  const dots = document.getElementById('dots');
+  chapters.forEach((c, i) => {
+    const b = document.createElement('button');
+    b.setAttribute('aria-label', 'Ir al capítulo ' + c.dataset.name);
+    b.onclick = () => scrollTo({ top: i * H(), behavior: 'smooth' });
+    dots.append(b);
+  });
+  document.getElementById('home').onclick = e => { e.preventDefault(); scrollTo({ top: 0, behavior: 'smooth' }); };
+  const dotEls = [...dots.children], chNum = document.getElementById('chNum'), chName = document.getElementById('chName'), bar = document.getElementById('progress');
+
+  let prog = 0, time = 0, last = performance.now(), active = -1;
+  if (DEEP) prog = +DEEP[1];
+  const look = new THREE.Vector3(), camPos = new THREE.Vector3(), tmp = new THREE.Vector3();
+  const c1 = new THREE.Color(), c2 = new THREE.Color(), bg = new THREE.Color();
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    step(now);
+  }
+  function step(now) {
+    const dt = Math.min((now - last) / 1000, 0.05); last = now;
+    time += reduce ? dt * 0.3 : dt;
+
+    const target = DEEP && document.body.classList.contains("loading") ? +DEEP[1] : Math.min(Math.max(scrollY / H(), 0), CH - 1) || 0;
+    prog += (target - prog) * (reduce ? 1 : 0.06);
+    const k = Math.min(Math.floor(prog), CH - 2), f = prog - k;
+    const e = ease(Math.min(Math.max((f - 0.1) / 0.7, 0), 1));
+    const A = KEYS[k], B = KEYS[k + 1];
+
+    camPos.lerpVectors(A.pos, B.pos, e);
+    look.lerpVectors(A.look, B.look, e);
+    if (narrow()) { look.x *= 0.25; camPos.z += 2.5; }
+    mouse.lerp(mTarget, 0.08);
+    force += (forceT - force) * 0.05;
+    tmp.set(mouse.x < 5 ? mouse.x * 0.5 : 0, mouse.y < 5 ? mouse.y * 0.3 : 0, 0);
+    camera.position.copy(camPos).add(tmp);
+    // Balanceo dentro del túnel
+    const tunnel = Math.max(0, 1 - Math.abs(prog - 3) * 1.4);
+    camera.up.set(Math.sin(time * 0.4) * 0.25 * tunnel, 1, 0).normalize();
+    camera.lookAt(look);
+
+    c1.lerpColors(A.c1, B.c1, e); c2.lerpColors(A.c2, B.c2, e); bg.lerpColors(A.bg, B.bg, e);
+    U.uC1.value.copy(c1); U.uC2.value.copy(c2); scene.background.copy(bg);
+    bloom.strength = THREE.MathUtils.lerp(A.bloom, B.bloom, e);
+    U.uGain.value = THREE.MathUtils.lerp(A.gain, B.gain, e);
+
+    U.uTime.value = time; U.uProg.value = prog;
+    U.uMouse.value.copy(mouse); U.uForce.value = reduce ? 0 : force;
+    composer.render();
+
+    // Capítulo activo
+    const idx = Math.round(target);
+    const now0 = Math.abs(target - idx) < 0.32 ? idx : -1;
+    if (now0 !== active) {
+      active = now0;
+      chapters.forEach((c, i) => c.classList.toggle('on', i === active));
+    }
+    dotEls.forEach((d, i) => d.classList.toggle('on', i === idx));
+    chNum.textContent = String(idx).padStart(2, '0');
+    chName.textContent = chapters[idx].dataset.name;
+    bar.style.transform = `scaleX(${target / (CH - 1)})`;
+    if (audio) audio.update(prog, tunnel);
+  }
+  requestAnimationFrame(frame);
+  // Solo para pruebas: ?debug permite avanzar fotogramas a mano
+  if (new URLSearchParams(location.search).has('debug')) window.__step = n => { for (let i = 0; i < n; i++) step(last + 16.7); };
+  loadTarget = 101;
+}
+
+/* ---------- Sonido ambiental (generado, sin archivos) ---------- */
+let audio = null;
+function makeAudio() {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const master = ctx.createGain(); master.gain.value = 0; master.connect(ctx.destination);
+  const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 400; filter.Q.value = 5;
+  const delay = ctx.createDelay(); delay.delayTime.value = 0.45;
+  const fb = ctx.createGain(); fb.gain.value = 0.35;
+  filter.connect(master); filter.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(master);
+  [55, 82.4, 110.3, 164.8].forEach((fq, i) => {
+    const o = ctx.createOscillator(); o.type = i % 2 ? 'sawtooth' : 'triangle'; o.frequency.value = fq; o.detune.value = rand(-8, 8);
+    const g = ctx.createGain(); g.gain.value = i % 2 ? 0.12 : 0.3;
+    o.connect(g).connect(filter); o.start();
+  });
+  const lfo = ctx.createOscillator(); lfo.frequency.value = 0.07;
+  const lg = ctx.createGain(); lg.gain.value = 160; lfo.connect(lg).connect(filter.frequency); lfo.start();
+  return {
+    ctx, on: false,
+    toggle(on) {
+      this.on = on;
+      if (on) ctx.resume();
+      master.gain.cancelScheduledValues(ctx.currentTime);
+      master.gain.setTargetAtTime(on ? 0.08 : 0, ctx.currentTime, 0.6);
+    },
+    update(p, tunnel) { filter.frequency.setTargetAtTime(320 + p * 90 + tunnel * 900, ctx.currentTime, 0.4); },
+    ping() {
+      if (!this.on) return;
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine'; o.frequency.setValueAtTime(880, ctx.currentTime); o.frequency.exponentialRampToValueAtTime(220, ctx.currentTime + 1.2);
+      g.gain.setValueAtTime(0.12, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1.4);
+      o.connect(g).connect(delay); g.connect(master); o.start(); o.stop(ctx.currentTime + 1.5);
+    }
+  };
+}
+const soundBtn = document.getElementById('sound');
+soundBtn.addEventListener('click', () => {
+  if (!audio) audio = makeAudio();
+  const on = !audio.on;
+  audio.toggle(on);
+  soundBtn.classList.toggle('on', on);
+  soundBtn.setAttribute('aria-pressed', on);
+  soundBtn.setAttribute('aria-label', on ? 'Silenciar sonido ambiental' : 'Activar sonido ambiental');
+});
+
+/* ---------- Cursor ---------- */
+if (fine) {
+  const dot = document.getElementById('cursor'), ring = document.getElementById('ring');
+  let x = innerWidth / 2, y = innerHeight / 2, rx = x, ry = y;
+  addEventListener('pointermove', e => { x = e.clientX; y = e.clientY; dot.style.transform = `translate(${x}px,${y}px)`; });
+  document.addEventListener('pointerover', e => ring.classList.toggle('big', !!e.target.closest('a, button')));
+  (function loop() { rx += (x - rx) * 0.15; ry += (y - ry) * 0.15; ring.style.transform = `translate(${rx}px,${ry}px)`; requestAnimationFrame(loop); })();
+}
+
+init();
+</script>
+</body>
+</html>
